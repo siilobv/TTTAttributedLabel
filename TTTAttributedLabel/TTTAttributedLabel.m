@@ -218,6 +218,7 @@ static inline CGSize CTFramesetterSuggestFrameSizeForAttributedStringWithConstra
 @property (readwrite, nonatomic, copy) NSAttributedString *inactiveAttributedText;
 @property (readwrite, nonatomic, copy) NSAttributedString *renderedAttributedText;
 @property (readwrite, atomic, strong) NSDataDetector *dataDetector;
+@property (readwrite, atomic, strong) NSRegularExpression *regularExpression;
 @property (readwrite, nonatomic, strong) NSArray *linkModels;
 @property (readwrite, nonatomic, strong) TTTAttributedLabelLink *activeLink;
 @property (readwrite, nonatomic, strong) NSArray *accessibilityElements;
@@ -296,20 +297,26 @@ static inline CGSize CTFramesetterSuggestFrameSizeForAttributedStringWithConstra
 
     NSMutableDictionary *mutableInactiveLinkAttributes = [NSMutableDictionary dictionary];
     [mutableInactiveLinkAttributes setObject:[NSNumber numberWithBool:NO] forKey:(NSString *)kCTUnderlineStyleAttributeName];
+    
+    NSMutableDictionary *mutableMentionAttributes = [NSMutableDictionary dictionary];
+    [mutableMentionAttributes setObject:[NSNumber numberWithBool:NO] forKey:(NSString *)kCTUnderlineStyleAttributeName];
 
     if ([NSMutableParagraphStyle class]) {
         [mutableLinkAttributes setObject:[UIColor blueColor] forKey:(NSString *)kCTForegroundColorAttributeName];
         [mutableActiveLinkAttributes setObject:[UIColor redColor] forKey:(NSString *)kCTForegroundColorAttributeName];
         [mutableInactiveLinkAttributes setObject:[UIColor grayColor] forKey:(NSString *)kCTForegroundColorAttributeName];
+        [mutableMentionAttributes setObject:[UIColor blueColor] forKey:(NSString *)kCTForegroundColorAttributeName];
     } else {
         [mutableLinkAttributes setObject:(__bridge id)[[UIColor blueColor] CGColor] forKey:(NSString *)kCTForegroundColorAttributeName];
         [mutableActiveLinkAttributes setObject:(__bridge id)[[UIColor redColor] CGColor] forKey:(NSString *)kCTForegroundColorAttributeName];
         [mutableInactiveLinkAttributes setObject:(__bridge id)[[UIColor grayColor] CGColor] forKey:(NSString *)kCTForegroundColorAttributeName];
+        [mutableMentionAttributes setObject:(__bridge id)[[UIColor blueColor] CGColor] forKey:(NSString *)kCTForegroundColorAttributeName];
     }
 
     self.linkAttributes = [NSDictionary dictionaryWithDictionary:mutableLinkAttributes];
     self.activeLinkAttributes = [NSDictionary dictionaryWithDictionary:mutableActiveLinkAttributes];
     self.inactiveLinkAttributes = [NSDictionary dictionaryWithDictionary:mutableInactiveLinkAttributes];
+    self.mentionAttributes = [NSDictionary dictionaryWithDictionary:mutableMentionAttributes];
     _extendsLinkTouchArea = NO;
     _longPressGestureRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self
                                                                                 action:@selector(longPressGestureDidFire:)];
@@ -470,9 +477,22 @@ static inline CGSize CTFramesetterSuggestFrameSizeForAttributedStringWithConstra
                 [dataDetectorsByType setObject:detector forKey:@(enabledTextCheckingTypes)];
             }
         }
+        
+        if (![dataDetectorsByType objectForKey:@(enabledTextCheckingTypes & NSTextCheckingTypeRegularExpression)]) {
+            if ((enabledTextCheckingTypes & NSTextCheckingTypeRegularExpression) && (self.regularExpressionPattern != nil)) {
+                NSRegularExpression *regularExpression = [NSRegularExpression regularExpressionWithPattern:self.regularExpressionPattern options:0 error:nil];
+                
+                if (regularExpression) {
+                    [dataDetectorsByType setObject:regularExpression forKey:@(enabledTextCheckingTypes & NSTextCheckingTypeRegularExpression)];
+                }
+            }
+        }
+        
         self.dataDetector = [dataDetectorsByType objectForKey:@(enabledTextCheckingTypes)];
+        self.regularExpression = [dataDetectorsByType objectForKey:@(enabledTextCheckingTypes & NSTextCheckingTypeRegularExpression)];
     } else {
         self.dataDetector = nil;
+        self.regularExpression = nil;
     }
 }
 
@@ -529,6 +549,10 @@ static inline CGSize CTFramesetterSuggestFrameSizeForAttributedStringWithConstra
 
 - (TTTAttributedLabelLink *)addLinkWithTextCheckingResult:(NSTextCheckingResult *)result {
     return [self addLinkWithTextCheckingResult:result attributes:self.linkAttributes];
+}
+
+- (TTTAttributedLabelLink *)addLinkToMentionWithTextCheckingResult:(NSTextCheckingResult *)result {
+    return [self addLinkWithTextCheckingResult:result attributes:self.mentionAttributes];
 }
 
 - (TTTAttributedLabelLink *)addLinkToURL:(NSURL *)url
@@ -1022,6 +1046,7 @@ static inline CGSize CTFramesetterSuggestFrameSizeForAttributedStringWithConstra
             __strong __typeof(weakSelf)strongSelf = weakSelf;
 
             NSDataDetector *dataDetector = strongSelf.dataDetector;
+
             if (dataDetector && [dataDetector respondsToSelector:@selector(matchesInString:options:range:)]) {
                 NSArray *results = [dataDetector matchesInString:[(NSAttributedString *)text string] options:0 range:NSMakeRange(0, [(NSAttributedString *)text length])];
                 if ([results count] > 0) {
@@ -1030,6 +1055,22 @@ static inline CGSize CTFramesetterSuggestFrameSizeForAttributedStringWithConstra
                             [strongSelf addLinksWithTextCheckingResults:results attributes:strongSelf.linkAttributes];
                         }
                     });
+                }
+            }
+
+            if ((strongSelf.enabledTextCheckingTypes & NSTextCheckingTypeRegularExpression) && (strongSelf.regularExpression && strongSelf.regularExpressionPattern)) {
+                NSRegularExpression *regularExpression = strongSelf.regularExpression;
+                
+                if (regularExpression && [regularExpression respondsToSelector:@selector(enumerateMatchesInString:options:range:usingBlock:)]) {
+                    NSArray *results = [regularExpression matchesInString:[(NSAttributedString *)text string] options:0 range:NSMakeRange(0, [(NSAttributedString *)text length])];
+                    
+                    if ([results count] > 0) {
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            if ([[strongSelf.attributedText string] isEqualToString:[(NSAttributedString *)text string]]) {
+                                [strongSelf addLinksWithTextCheckingResults:results attributes:strongSelf.mentionAttributes];
+                            }
+                        });
+                    }
                 }
             }
         });
@@ -1471,6 +1512,15 @@ afterInheritingLabelAttributesAndConfiguringWithBlock:(NSMutableAttributedString
                     [self.delegate attributedLabel:self didSelectLinkWithTransitInformation:result.components];
                     return;
                 }
+                break;
+            case NSTextCheckingTypeRegularExpression:
+                if ([result.regularExpression.pattern isEqualToString:self.regularExpressionPattern]) {
+                    if ([self.delegate respondsToSelector:@selector(attributedLabel:didSelectLinkWithMention:inRange:)]) {
+                        [self.delegate attributedLabel:self didSelectLinkWithMention:[self.attributedText.string substringWithRange:result.range] inRange:result.range];
+                        return;
+                    }
+                }
+                break;
             default:
                 break;
         }
@@ -1553,6 +1603,15 @@ afterInheritingLabelAttributesAndConfiguringWithBlock:(NSMutableAttributedString
                             [self.delegate attributedLabel:self didLongPressLinkWithTransitInformation:result.components atPoint:touchPoint];
                             return;
                         }
+                        break;
+                    case NSTextCheckingTypeRegularExpression:
+                        if ([result.regularExpression.pattern isEqualToString:self.regularExpressionPattern]) {
+                            if ([self.delegate respondsToSelector:@selector(attributedLabel:didLongPressLinkWithMention:inRange:atPoint:)]) {
+                                [self.delegate attributedLabel:self didLongPressLinkWithMention:[self.attributedText.string substringWithRange:result.range] inRange:result.range atPoint:touchPoint];;
+                                return;
+                            }
+                        }
+                        break;
                     default:
                         break;
                 }
@@ -1589,6 +1648,7 @@ afterInheritingLabelAttributesAndConfiguringWithBlock:(NSMutableAttributedString
         [coder encodeObject:self.linkAttributes forKey:NSStringFromSelector(@selector(linkAttributes))];
         [coder encodeObject:self.activeLinkAttributes forKey:NSStringFromSelector(@selector(activeLinkAttributes))];
         [coder encodeObject:self.inactiveLinkAttributes forKey:NSStringFromSelector(@selector(inactiveLinkAttributes))];
+        [coder encodeObject:self.mentionAttributes forKey:NSStringFromSelector(@selector(mentionAttributes))];
     }
     [coder encodeObject:@(self.shadowRadius) forKey:NSStringFromSelector(@selector(shadowRadius))];
     [coder encodeObject:@(self.highlightedShadowRadius) forKey:NSStringFromSelector(@selector(highlightedShadowRadius))];
@@ -1631,6 +1691,10 @@ afterInheritingLabelAttributesAndConfiguringWithBlock:(NSMutableAttributedString
 
         if ([coder containsValueForKey:NSStringFromSelector(@selector(inactiveLinkAttributes))]) {
             self.inactiveLinkAttributes = [coder decodeObjectForKey:NSStringFromSelector(@selector(inactiveLinkAttributes))];
+        }
+        
+        if ([coder containsValueForKey:NSStringFromSelector(@selector(mentionAttributes))]) {
+            self.mentionAttributes = [coder decodeObjectForKey:NSStringFromSelector(@selector(mentionAttributes))];
         }
     }
 

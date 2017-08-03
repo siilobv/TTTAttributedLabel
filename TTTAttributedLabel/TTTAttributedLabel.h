@@ -157,6 +157,11 @@ IB_DESIGNABLE
 @property (nonatomic, strong) NSDictionary *inactiveLinkAttributes;
 
 /**
+ A dictionary containing the default `NSAttributedString` attributes to be applied to mentions when they are in the active state. If `nil` or an empty `NSDictionary`, active links will not be styled. The default active link style is red.
+*/
+@property (nonatomic, strong) NSDictionary *mentionAttributes;
+
+/**
  The edge inset for the background of a link. The default value is `{0, -1, 0, -1}`.
  */
 @property (nonatomic, assign) UIEdgeInsets linkBackgroundEdgeInset;
@@ -167,6 +172,12 @@ IB_DESIGNABLE
  Default value is NO. Enabling this may adversely impact performance.
  */
 @property (nonatomic, assign) BOOL extendsLinkTouchArea;
+
+/**
+ The regular expression (regex) pattern used to detect a mention.
+ It must be set even if the `NSRegularExpression` is used outside the label.
+*/
+@property (readwrite, nonatomic, strong) NSString *regularExpressionPattern;
 
 ///---------------------------------------
 /// @name Acccessing Text Style Attributes
@@ -329,6 +340,15 @@ afterInheritingLabelAttributesAndConfiguringWithBlock:(NSMutableAttributedString
  @return The newly added link object.
  */
 - (TTTAttributedLabelLink *)addLinkWithTextCheckingResult:(NSTextCheckingResult *)result;
+    
+/**
+ Adds a link to a mention in an @c NSTextCheckingResult.
+ 
+ @param result An @c NSTextCheckingResult representing the mention's location and type.
+     
+ @return The newly added link object.
+ */
+- (TTTAttributedLabelLink *)addLinkToMentionWithTextCheckingResult:(NSTextCheckingResult *)result;
 
 /**
  Adds a link to an @c NSTextCheckingResult.
@@ -606,6 +626,26 @@ didLongPressLinkWithTransitInformation:(NSDictionary *)components
 - (void)attributedLabel:(TTTAttributedLabel *)label
 didLongPressLinkWithTextCheckingResult:(NSTextCheckingResult *)result
                 atPoint:(CGPoint)point;
+
+/**
+ Tells the delegate that the user long-pressed a mention to a text and a range.
+ 
+ @param label The label whose link was long pressed.
+ @param mentionString The text from a mention.
+ @param range The range representing the mention text in the label text.
+*/
+- (void)attributedLabel:(TTTAttributedLabel *)label didSelectLinkWithMention:(NSString *)mentionString inRange:(NSRange)range;
+
+    
+/**
+ Tells the delegate that the user long-pressed a link to a text checking result
+     
+ @param label The label whose link was long pressed.
+ @param mentionString The text from a mention.
+ @param range The range representing the mention text in the label text.
+ @param point the point pressed, in the label's coordinate space
+*/
+- (void)attributedLabel:(TTTAttributedLabel *)label didLongPressLinkWithMention:(NSString *)mentionString inRange:(NSRange)range atPoint:(CGPoint)point;
 
 @end
 
